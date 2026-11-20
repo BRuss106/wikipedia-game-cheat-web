@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Six Degrees | Wikipedia shortest path</title>
+<meta name="description" content="Find the shortest chain of links between any two Wikipedia articles, right in your browser.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23090b10'/%3E%3Cpath d='M7 16h18' stroke='%23fff' stroke-width='2'/%3E%3Ccircle cx='7' cy='16' r='4' fill='%233de8ff'/%3E%3Ccircle cx='25' cy='16' r='4' fill='%23ffb23d'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="preconnect" href="https://en.wikipedia.org" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #090b10; --ink: #e6eaf2; --dim: #7b8598; --line: #1f2633;
+    --cyan: #3de8ff; --amber: #ffb23d; --red: #ff6b6b;
+    --display: "Bebas Neue", Impact, "Arial Narrow", sans-serif;
+    --sans: Inter, system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--ink); font: 400 15px/1.5 var(--sans); }
+  main { max-width: 900px; margin: 0 auto; padding: 48px 24px 80px; }
+
+  h1 { font: 400 34px var(--display); letter-spacing: .22em; }
+  .sub { color: var(--dim); margin: 4px 0 40px; }
+
+  .controls { display: grid; grid-template-columns: 1fr 1fr auto; gap: 16px; align-items: end; }
+  .field label { display: block; font: 500 11px var(--sans); letter-spacing: .16em; margin-bottom: 6px; }
+  .origin label { color: var(--cyan); } .target label { color: var(--amber); }
+  input { width: 100%; background: transparent; border: 0; border-bottom: 1px solid #2c3647; outline: none; border-radius: 0;
+          color: #fff; font: 400 32px/1.1 var(--display); letter-spacing: .05em; padding: 4px 0 8px; transition: border-color .2s; }
+  input::placeholder { color: #2e384a; }
+  .origin input:focus { border-color: var(--cyan); } .target input:focus { border-color: var(--amber); }
+  button { font: 600 14px var(--sans); letter-spacing: .08em; padding: 13px 24px; border: 0; border-radius: 4px;
+           background: var(--amber); color: #111; cursor: pointer; transition: filter .15s; }
+  button:hover { filter: brightness(1.12); }
+  button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+  button.running { background: transparent; color: var(--red); outline: 1px solid var(--red); outline-offset: -1px; }
+
+  #status { margin: 26px 0 10px; min-height: 22px; color: var(--dim); font-size: 14px; }
+  #status.error { color: var(--red); }
+
+  .map { position: relative; height: 340px; border: 1px solid var(--line); border-radius: 6px; background: #0b0e14; overflow: hidden; }
+  canvas { width: 100%; height: 100%; display: block; }
+  .demo { display: none; margin-top: 10px; font-size: 12px; color: var(--red); }
+  body.demo .demo { display: block; }
+
+  .result { display: none; margin-top: 32px; }
+  .result.show { display: block; animation: fade .6s; }
+  @keyframes fade { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+  .big { font: 400 72px/1 var(--display); letter-spacing: .05em; margin-bottom: 16px; }
+  .chain { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .step { padding: 8px 14px; border: 1px solid #2c3647; border-radius: 4px; color: var(--ink); text-decoration: none; font-weight: 500; transition: border-color .15s; }
+  .step:hover { border-color: #fff; }
+  .step.first { border-color: var(--cyan); } .step.last { border-color: var(--amber); }
+  .arrow { color: var(--dim); }
+  .share { margin-top: 18px; background: transparent; color: var(--dim); outline: 1px solid #2c3647; outline-offset: -1px; padding: 9px 16px; font-size: 12px; }
+  .share:hover { color: var(--ink); }
+
+  footer { margin-top: 64px; font-size: 12px; color: var(--dim); }
+  footer a { color: var(--dim); }
+  footer a:hover { color: var(--ink); }
+
+  @media (max-width: 700px) {
+    main { padding: 32px 16px 64px; }
+    .controls { grid-template-columns: 1fr; }
+    .big { font-size: 56px; }
+    .map { height: 280px; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>SIX DEGREES</h1>
+  <p class="sub">Find the shortest chain of links between two Wikipedia articles.</p>
+
+  <div class="controls">
+    <div class="field origin"><label for="start">FROM</label><input id="start" list="start-list" autocomplete="off" spellcheck="false" placeholder="PROVO, UTAH"></div>
+    <div class="field target"><label for="end">TO</label><input id="end" list="end-list" autocomplete="off" spellcheck="false" placeholder="ALAN TURING"></div>
+    <button id="go">FIND PATH</button>
+  </div>
+  <datalist id="start-list"></datalist>
+  <datalist id="end-list"></datalist>
+
+  <div id="status" role="status">Enter two articles and press Find Path.</div>
+  <div class="map"><canvas id="net" aria-hidden="true"></canvas></div>
+  <div class="demo">Demo mode: simulated data.</div>
+
+  <section class="result" id="result" aria-live="polite">
+    <div class="big" id="big"></div>
+    <div class="chain" id="chain"></div>
+    <button class="share" id="share">COPY LINK TO THIS RESULT</button>
+  </section>
+
+  <footer>
+    Runs entirely in your browser using the public <a href="https://www.mediawiki.org/wiki/API:Main_page" target="_blank" rel="noopener">Wikipedia API</a>.
+    Only links in the article body count, like in the real game.
+    · <a href="https://github.com/BRuss106/wikipedia-game-cheat-web" target="_blank" rel="noopener">Source on GitHub</a>
+  </footer>
+</main>
+
+<script type="module">
+import { cleanTitle, resolveTitle, findPath, suggest } from './wiki.js';
+
+const $ = s => document.querySelector(s);
+const params = new URLSearchParams(location.search);
+const DEMO = params.has('demo');
+if (DEMO) document.body.classList.add('demo');
+
+const canvas = $('#net'), ctx = canvas.getContext('2d');
+const COLORS = { forward: '61,232,255', backward: '255,178,61' };
+let W = 0, H = 0, controller = null, demoTimers = [], S = fresh();
+
+function fresh() {
+  return { nodes: [], pulses: [], labels: { forward: '', backward: '' }, path: null, pathStart: 0,
+           running: false, t0: 0, discovered: 0, phase: '', requests: 0 };
+}
+
+function resize() {
+  const dpr = window.devicePixelRatio || 1, r = canvas.getBoundingClientRect();
+  W = r.width; H = r.height;
+  canvas.width = W * dpr; canvas.height = H * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+window.addEventListener('resize', resize);
+
+const anchor = side => side === 'forward' ? { x: W * 0.08, y: H / 2 } : { x: W * 0.92, y: H / 2 };
+const ringStep = () => W * 0.09;
+const pathPoint = t => { const o = anchor('forward'), g = anchor('backward');
+  return { x: o.x + (g.x - o.x) * t, y: H / 2 + Math.sin(t * Math.PI * 2) * H * 0.16 }; };
+
+function addLevel(ev) {
+  const a = anchor(ev.side), dir = ev.side === 'forward' ? 1 : -1;
+  const parents = S.nodes.filter(n => n.side === ev.side && n.depth === ev.depth - 1);
+  const count = Math.min(ev.found, 30);
+  for (let i = 0; i < count; i++) {
+    const ang = (Math.random() * 2 - 1) * 1.15;
+    const r = 30 + ev.depth * ringStep() + (Math.random() - 0.5) * ringStep() * 0.5;
+    S.nodes.push({
+      side: ev.side, depth: ev.depth,
+      x: a.x + dir * Math.cos(ang) * r,
+      y: Math.max(16, Math.min(H - 16, a.y + Math.sin(ang) * r * 0.85)),
+      parent: parents.length ? parents[Math.floor(Math.random() * parents.length)] : a,
+      born: performance.now() + i * 25,
+    });
+  }
+}
+const pulse = (x, y, color) => S.pulses.push({ x, y, color, t0: performance.now() });
+
+function label(text, x, y, rgb, alpha = 1) {
+  ctx.font = '500 12px Inter, sans-serif'; ctx.textAlign = 'center';
+  ctx.fillStyle = `rgba(${rgb},${alpha})`;
+  const shown = text.length > 26 ? text.slice(0, 25) + '…' : text;
+  const half = ctx.measureText(shown).width / 2 + 6;   // keep the whole label inside the map
+  ctx.fillText(shown, Math.max(half, Math.min(W - half, x)), y);
+}
+
+function draw(now) {
+  ctx.clearRect(0, 0, W, H);
+  const dim = S.path ? 0.25 : 1;
+
+  for (const n of S.nodes) {
+    const age = (now - n.born) / 1000;
+    if (age < 0) continue;
+    const a = Math.min(1, age * 2.5) * dim;
+    ctx.strokeStyle = `rgba(${COLORS[n.side]},${0.2 * a})`; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(n.parent.x, n.parent.y); ctx.lineTo(n.x, n.y); ctx.stroke();
+    ctx.fillStyle = `rgba(${COLORS[n.side]},${0.85 * a})`;
+    ctx.beginPath(); ctx.arc(n.x, n.y, 2.2, 0, Math.PI * 2); ctx.fill();
+  }
+
+  S.pulses = S.pulses.filter(p => now - p.t0 < 1400);
+  for (const p of S.pulses) {
+    const t = (now - p.t0) / 1400;
+    ctx.beginPath(); ctx.arc(p.x, p.y, 8 + t * 150, 0, Math.PI * 2);
+    ctx.strokeStyle = `rgba(${p.color},${(1 - t) * 0.5})`; ctx.lineWidth = 1.5; ctx.stroke();
+  }
+
+  for (const side of ['forward', 'backward']) {
+    const a = anchor(side);
+    ctx.fillStyle = `rgb(${COLORS[side]})`;
+    ctx.beginPath(); ctx.arc(a.x, a.y, 5, 0, Math.PI * 2); ctx.fill();
+    if (S.labels[side] && !S.path) label(S.labels[side], a.x, a.y + 26, COLORS[side]);
+  }
+
+  if (S.path) {
+    const e = 1 - Math.pow(1 - Math.min(1, (now - S.pathStart) / 2200), 3);
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.lineJoin = 'round';
+    ctx.beginPath();
+    for (let i = 0; i <= 120; i++) { const p = pathPoint((i / 120) * e); i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y); }
+    ctx.stroke();
+    const n = S.path.length;
+    S.path.forEach((title, i) => {
+      const t = n === 1 ? 0 : i / (n - 1);
+      if (t > e + 0.001) return;
+      const p = pathPoint(t), rgb = i === 0 ? COLORS.forward : i === n - 1 ? COLORS.backward : '255,255,255';
+      ctx.fillStyle = `rgb(${rgb})`; ctx.beginPath(); ctx.arc(p.x, p.y, 5.5, 0, Math.PI * 2); ctx.fill();
+      label(title, p.x, p.y + (i % 2 ? 24 : -14), rgb);
+    });
+  }
+
+  if (S.running && S.phase) {
+    const secs = ((now - S.t0) / 1000).toFixed(0);
+    const reqs = S.requests ? ` · ${S.requests.toLocaleString()} requests` : '';
+    setStatus(`${S.phase}${reqs} · ${secs}s`);
+  }
+  requestAnimationFrame(draw);
+}
+
+/* ---------- status + events ---------- */
+function setStatus(text, isError = false) {
+  const el = $('#status'); el.textContent = text; el.classList.toggle('error', isError);
+}
+function setRunning(on) {
+  S.running = on;
+  const b = $('#go'); b.classList.toggle('running', on); b.textContent = on ? 'STOP' : 'FIND PATH';
+}
+function finish() {
+  if (controller) { controller.abort(); controller = null; }
+  demoTimers.forEach(clearTimeout); demoTimers = [];
+  setRunning(false);
+}
+
+function handle(ev) {
+  switch (ev.type) {
+    case 'resolved':
+      S.labels.forward = ev.start; S.labels.backward = ev.end;
+      S.phase = 'Searching from both ends';
+      break;
+    case 'scan':
+      pulse(anchor(ev.side).x, anchor(ev.side).y, COLORS[ev.side]);
+      S.phase = `Sweeping ${ev.side}: ${ev.scanned.toLocaleString()} article${ev.scanned === 1 ? '' : 's'}`;
+      break;
+    case 'progress':
+      S.phase = `Sweeping ${ev.side}: ${ev.done.toLocaleString()} of ${ev.total.toLocaleString()} articles`;
+      break;
+    case 'retry':
+      S.phase = 'Dropping a link that was only in a reference, searching again';
+      break;
+    case 'wait':
+      S.phase = `Wikipedia asked us to slow down, waiting ${ev.seconds}s`;
+      break;
+    case 'requests':
+      S.requests = ev.count;
+      break;
+    case 'level':
+      S.discovered = ev.discovered; addLevel(ev);
+      S.phase = `Mapped ${ev.discovered.toLocaleString()} articles`;
+      break;
+    case 'meeting':
+      pulse(W / 2, H / 2, '255,255,255');
+      break;
+    case 'found': showPath(ev.path); break;
+    case 'none': setStatus('No route exists between those articles.', true); finish(); break;
+    case 'error': setStatus(ev.message, true); finish(); break;
+  }
+}
+
+function showPath(path) {
+  const links = path.length - 1;
+  const secs = ((performance.now() - S.t0) / 1000).toFixed(1);
+  const reqs = S.requests ? ` and ${S.requests.toLocaleString()} requests` : '';
+  setStatus(`Found in ${secs}s after mapping ${S.discovered.toLocaleString()} articles${reqs}.`);
+  S.path = path; S.pathStart = performance.now();
+  finish();
+
+  $('#big').textContent = `${links} LINK${links === 1 ? '' : 'S'}`;
+  const chain = $('#chain'); chain.innerHTML = '';
+  path.forEach((title, i) => {
+    if (i) { const s = document.createElement('span'); s.className = 'arrow'; s.textContent = '→'; chain.appendChild(s); }
+    const a = document.createElement('a');
+    a.className = 'step' + (i === 0 ? ' first' : i === path.length - 1 ? ' last' : '');
+    a.href = 'https://en.wikipedia.org/wiki/' + encodeURIComponent(title.replace(/ /g, '_'));
+    a.target = '_blank'; a.rel = 'noopener'; a.textContent = title;
+    chain.appendChild(a);
+  });
+  setTimeout(() => $('#result').classList.add('show'), 1800);
+}
+
+/* ---------- run / stop ---------- */
+function run() {
+  if (S.running) { finish(); setStatus('Stopped.'); return; }
+  const start = $('#start').value.trim() || $('#start').placeholder;
+  const end = $('#end').value.trim() || $('#end').placeholder;
+  S = fresh(); S.running = true; S.t0 = performance.now();
+  $('#result').classList.remove('show');
+  setRunning(true); setStatus('Starting...');
+
+  // Put the search in the address bar so the page can be bookmarked or shared.
+  const query = new URLSearchParams({ from: start, to: end });
+  if (DEMO) query.set('demo', '1');
+  history.replaceState(null, '', `?${query}`);
+
+  if (DEMO) return demo(start, end);
+  search(start, end);
+}
+
+async function search(startRaw, endRaw) {
+  const mine = controller = new AbortController();
+  // Ignore anything a stopped search still reports.
+  const onEvent = ev => { if (!mine.signal.aborted) handle(ev); };
+  const ctx = { signal: mine.signal, onEvent, requests: 0 };
+  try {
+    const [start, end] = await Promise.all([
+      resolveTitle(cleanTitle(startRaw), ctx),
+      resolveTitle(cleanTitle(endRaw), ctx),
+    ]);
+    if (!start) return onEvent({ type: 'error', message: `No article called "${startRaw}".` });
+    if (!end) return onEvent({ type: 'error', message: `No article called "${endRaw}".` });
+    onEvent({ type: 'resolved', start, end });
+
+    const path = await findPath(start, end, { ctx });
+    onEvent(path ? { type: 'found', path } : { type: 'none' });
+  } catch (e) {
+    if (e.name === 'AbortError') return;
+    const message = e instanceof TypeError
+      ? "Couldn't reach Wikipedia. Check your connection and try again."
+      : e.message;
+    onEvent({ type: 'error', message });
+  }
+}
+
+/* ---------- demo mode: add ?demo=1 to the URL ---------- */
+function demo(start, end) {
+  const seq = [
+    [400,  { type: 'resolved', start, end }],
+    [900,  { type: 'scan', side: 'forward', scanned: 1 }],
+    [1700, { type: 'level', side: 'forward', depth: 1, found: 312, discovered: 313 }],
+    [2200, { type: 'scan', side: 'backward', scanned: 1 }],
+    [3000, { type: 'level', side: 'backward', depth: 1, found: 487, discovered: 800 }],
+    [3500, { type: 'scan', side: 'forward', scanned: 312 }],
+    [5000, { type: 'level', side: 'forward', depth: 2, found: 9120, discovered: 9920 }],
+    [5500, { type: 'scan', side: 'backward', scanned: 487 }],
+    [7000, { type: 'level', side: 'backward', depth: 2, found: 14800, discovered: 24720 }],
+    [7500, { type: 'meeting', title: 'Computer science' }],
+    [7900, { type: 'found', path: [start, 'Mathematics', 'Computer science', 'Algorithm', end] }],
+  ];
+  seq.forEach(([t, ev]) => demoTimers.push(setTimeout(() => handle(ev), t)));
+}
+
+/* ---------- autocomplete: article titles as you type ---------- */
+function autocomplete(input, list) {
+  let timer = 0, pending = null;
+  input.addEventListener('input', () => {
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      pending?.abort();
+      pending = new AbortController();
+      try {
+        const titles = await suggest(input.value, pending.signal);
+        list.replaceChildren(...titles.map(t => Object.assign(document.createElement('option'), { value: t })));
+      } catch { /* suggestions are optional */ }
+    }, 250);
+  });
+}
+if (!DEMO) {
+  autocomplete($('#start'), $('#start-list'));
+  autocomplete($('#end'), $('#end-list'));
+}
+
+/* ---------- share ---------- */
+$('#share').addEventListener('click', async () => {
+  const b = $('#share');
+  try { await navigator.clipboard.writeText(location.href); b.textContent = 'LINK COPIED'; }
+  catch { b.textContent = 'COPY THE ADDRESS BAR TO SHARE'; }
+  setTimeout(() => { b.textContent = 'COPY LINK TO THIS RESULT'; }, 2000);
+});
+
+$('#go').addEventListener('click', run);
+['#start', '#end'].forEach(id => $(id).addEventListener('keydown', e => { if (e.key === 'Enter') run(); }));
+resize();
+requestAnimationFrame(draw);
+
+// Opened from a shared link (?from=...&to=...): fill in the boxes and search right away.
+if (params.get('from') && params.get('to')) {
+  $('#start').value = params.get('from');
+  $('#end').value = params.get('to');
+  run();
+}
+</script>
+</body>
+</html>
